@@ -1,1 +1,435 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>源力图标演练场</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100">
+  <div id="app" class="min-h-screen p-4 md:p-6">
+    <div class="mx-auto grid max-w-7xl grid-cols-1 gap-4 xl:grid-cols-2">
+      <div class="flex min-h-[720px] flex-col gap-4">
+        <section class="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="text-sm font-semibold tracking-wide text-slate-200">AI 指令输入框</h2>
+            <button
+              class="rounded-md bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
+              :disabled="aiLoading || !aiPrompt.trim()"
+              @click="runAiPrompt"
+            >
+              {{ aiLoading ? '生成中...' : 'AI 生成路径' }}
+            </button>
+          </div>
+          <textarea
+            v-model="aiPrompt"
+            spellcheck="false"
+            placeholder="例如：生成一个几何风格的收件箱图标，保持48画板与2px网格约束"
+            class="h-24 w-full resize-none rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-200 outline-none"
+          ></textarea>
+          <p class="mt-2 text-xs text-violet-300">{{ aiHint }}</p>
+        </section>
 
+        <section class="flex min-h-[260px] flex-1 flex-col rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="text-sm font-semibold tracking-wide text-slate-200">源码编辑区</h2>
+            <button
+              class="rounded-md bg-indigo-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-400"
+              @click="applySource"
+            >
+              应用源码
+            </button>
+          </div>
+          <textarea
+            v-model="sourceText"
+            spellcheck="false"
+            class="h-full w-full resize-none rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-200 outline-none"
+          ></textarea>
+          <p class="mt-2 text-xs text-amber-300">{{ sourceHint }}</p>
+        </section>
+
+        <section class="flex min-h-[260px] flex-1 flex-col rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="text-sm font-semibold tracking-wide text-slate-200">GUI 表单调节区</h2>
+            <span class="text-xs text-slate-400">自动识别 M/L 关键点</span>
+          </div>
+          <div class="grid grid-cols-1 gap-3 overflow-auto pr-1 md:grid-cols-2">
+            <div
+              v-for="(point, index) in formPoints"
+              :key="point.id"
+              class="rounded-lg border border-slate-800 bg-slate-950/70 p-3"
+              @mouseenter="setHoveredPoint(point.id)"
+              @mouseleave="setHoveredPoint('')"
+            >
+              <div class="mb-2 text-xs text-slate-400">{{ point.label }}</div>
+              <div class="grid grid-cols-2 gap-2">
+                <label class="text-xs text-slate-300">
+                  {{ point.label }} - X
+                  <input
+                    :value="point.x"
+                    type="number"
+                    step="2"
+                    min="0"
+                    max="48"
+                    :class="[
+                      'mt-1 w-full rounded-md border bg-slate-900 px-2 py-1.5 text-sm',
+                      misalignedPointIds.includes(point.id) ? 'border-red-500' : 'border-slate-700'
+                    ]"
+                    @input="onCoordInput(index, 'x', $event)"
+                  />
+                </label>
+                <label class="text-xs text-slate-300">
+                  {{ point.label }} - Y
+                  <input
+                    :value="point.y"
+                    type="number"
+                    step="2"
+                    min="0"
+                    max="48"
+                    :class="[
+                      'mt-1 w-full rounded-md border bg-slate-900 px-2 py-1.5 text-sm',
+                      misalignedPointIds.includes(point.id) ? 'border-red-500' : 'border-slate-700'
+                    ]"
+                    @input="onCoordInput(index, 'y', $event)"
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+          <p class="mt-3 text-xs text-slate-400">坐标仅允许整数且为 2 的倍数。</p>
+          <p v-if="gridWarning" class="mt-2 text-xs text-red-400">{{ gridWarning }}</p>
+        </section>
+      </div>
+
+      <div class="rounded-xl border border-slate-800 bg-slate-900/70 p-4">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 class="text-sm font-semibold tracking-wide text-slate-200">预览区</h2>
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="flex items-center gap-2">
+              <button class="rounded-md bg-slate-700 px-2 py-1 text-xs hover:bg-slate-600" @click="zoomOut">-</button>
+              <input v-model.number="previewScale" type="range" min="2" max="12" step="0.5" class="w-28 accent-indigo-400" />
+              <button class="rounded-md bg-slate-700 px-2 py-1 text-xs hover:bg-slate-600" @click="zoomIn">+</button>
+              <span class="w-12 text-right text-xs text-slate-300">{{ previewPercent }}%</span>
+            </div>
+            <label class="flex items-center gap-2 text-xs text-slate-300">
+              <input v-model="showGuides" type="checkbox" class="h-3.5 w-3.5 rounded border-slate-600 bg-slate-900" />
+              显示黄金比例线 & 60° 辅助线
+            </label>
+          </div>
+        </div>
+        <div class="mb-3 flex items-center gap-2">
+          <button class="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500" @click="downloadSvg">
+            下载 SVG 文件
+          </button>
+          <button class="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500" @click="copyCode">
+            复制代码
+          </button>
+          <span v-if="actionHint" class="text-xs text-slate-300">{{ actionHint }}</span>
+        </div>
+        <div class="flex h-[52vh] min-h-[420px] items-center justify-center rounded-lg border border-slate-800 bg-slate-950 lg:h-[760px]">
+          <div class="grid-bg flex h-[420px] w-[420px] items-center justify-center rounded-lg border border-slate-800">
+            <div class="relative flex h-[48px] w-[48px] items-center justify-center border border-slate-500" :style="previewTransformStyle">
+              <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <g v-if="showGuides" stroke="#22d3ee" stroke-width="0.6" stroke-dasharray="1.5 1.5" opacity="0.8">
+                  <line x1="18.33" y1="0" x2="18.33" y2="48" />
+                  <line x1="29.67" y1="0" x2="29.67" y2="48" />
+                  <line x1="0" y1="18.33" x2="48" y2="18.33" />
+                  <line x1="0" y1="29.67" x2="48" y2="29.67" />
+                  <line x1="8" y1="40" x2="24" y2="12.29" />
+                  <line x1="24" y1="12.29" x2="40" y2="40" />
+                </g>
+                <g v-if="hoveredPoint">
+                  <circle :cx="hoveredPoint.x" :cy="hoveredPoint.y" r="4" fill="rgba(239,68,68,0.25)" class="pulse-ring" />
+                  <circle :cx="hoveredPoint.x" :cy="hoveredPoint.y" r="2.2" fill="rgba(239,68,68,0.35)" />
+                  <circle :cx="hoveredPoint.x" :cy="hoveredPoint.y" r="0.9" fill="#ef4444" />
+                </g>
+                <path :d="pathD" stroke="#334155" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div class="mt-3 rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-xs text-slate-300">
+          <div class="text-slate-400">d =</div>
+          <div class="mt-1 break-all">{{ pathD }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .grid-bg {
+      background-color: #f8fafc;
+      background-image:
+        linear-gradient(to right, #e5e7eb 1px, transparent 1px),
+        linear-gradient(to bottom, #e5e7eb 1px, transparent 1px);
+      background-size: 2px 2px;
+    }
+    .pulse-ring {
+      transform-origin: center;
+      animation: ringPulse 1.2s ease-out infinite;
+    }
+    @keyframes ringPulse {
+      0% {
+        transform: scale(1);
+        opacity: 0.85;
+      }
+      100% {
+        transform: scale(1.5);
+        opacity: 0.15;
+      }
+    }
+  </style>
+
+  <script>
+    const { createApp, ref, computed, watch } = Vue
+
+    createApp({
+      setup() {
+        const defaultPath = 'M6 12 L42 12 L42 36 L6 36 Z M6 12 L24 24 L42 12'
+        const apiEndpoint = '/api/icon-path'
+        const pathSegments = ref([])
+        const previewScale = ref(6)
+        const hoveredPointId = ref('')
+        const misalignedPointIds = ref([])
+        const showGuides = ref(false)
+        const gridWarning = ref('')
+        const aiLoading = ref(false)
+        const aiPrompt = ref('请基于 48x48 画板与 2px 网格，生成一个邮件/信封图标路径')
+        const aiHint = ref('输入图标描述后点击“AI 生成路径”。当前为预留接口，可直接接入你的后端。')
+        const sourceHint = ref('源码示例：M6 12 L42 12 L42 36 L6 36 Z M6 12 L24 24 L42 12')
+        const sourceText = ref(defaultPath)
+
+        const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
+
+        const normalizeCoord = (value) => {
+          const numeric = Number(value)
+          const safeNumber = Number.isFinite(numeric) ? numeric : 0
+          const integer = Math.round(safeNumber)
+          const multipleOfTwo = Math.round(integer / 2) * 2
+          return clamp(multipleOfTwo, 0, 48)
+        }
+
+        const parsePathToSegments = (path) => {
+          const tokens = path.match(/[MLZmlz]|-?\d*\.?\d+/g) || []
+          const parsed = []
+          const misalignedLabels = []
+          const misalignedIds = []
+          let currentCmd = ''
+          let cursor = 0
+          let pointCount = 0
+
+          while (cursor < tokens.length) {
+            const token = tokens[cursor]
+            if (/^[MLZmlz]$/.test(token)) {
+              const upper = token.toUpperCase()
+              if (upper === 'Z') {
+                parsed.push({ type: 'close' })
+                currentCmd = ''
+                cursor += 1
+                continue
+              }
+              currentCmd = upper
+              cursor += 1
+              continue
+            }
+
+            if (!currentCmd || (currentCmd !== 'M' && currentCmd !== 'L')) {
+              cursor += 1
+              continue
+            }
+
+            const xToken = tokens[cursor]
+            const yToken = tokens[cursor + 1]
+            if (yToken === undefined || /^[MLZmlz]$/.test(yToken)) {
+              cursor += 1
+              continue
+            }
+
+            pointCount += 1
+            const rawX = Number(xToken)
+            const rawY = Number(yToken)
+            const xAligned = Number.isInteger(rawX) && rawX % 2 === 0
+            const yAligned = Number.isInteger(rawY) && rawY % 2 === 0
+            const pointId = `${pointCount}-${currentCmd}`
+            if (!xAligned || !yAligned) {
+              misalignedLabels.push(`Point ${pointCount}`)
+              misalignedIds.push(pointId)
+            }
+            parsed.push({
+              type: 'point',
+              cmd: currentCmd,
+              x: normalizeCoord(xToken),
+              y: normalizeCoord(yToken),
+              label: `Point ${pointCount}`,
+              id: pointId
+            })
+            cursor += 2
+            if (currentCmd === 'M') currentCmd = 'L'
+          }
+
+          return { segments: parsed, misalignedLabels, misalignedIds }
+        }
+
+        const buildPathFromSegments = (segments) =>
+          segments
+            .map((segment) => {
+              if (segment.type === 'close') return 'Z'
+              return `${segment.cmd}${segment.x} ${segment.y}`
+            })
+            .join(' ')
+
+        const formPoints = computed(() => pathSegments.value.filter((segment) => segment.type === 'point'))
+        const hoveredPoint = computed(() =>
+          formPoints.value.find((point) => point.id === hoveredPointId.value) || null
+        )
+        const previewPercent = computed(() => Math.round((previewScale.value / 6) * 100))
+        const previewTransformStyle = computed(() => ({
+          transform: `scale(${previewScale.value})`,
+          transformOrigin: 'center center'
+        }))
+        const pathD = computed(() => buildPathFromSegments(pathSegments.value))
+        const actionHint = ref('')
+        const svgCode = computed(
+          () =>
+            `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none"><path d="${pathD.value}" stroke="#334155" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+        )
+
+        const syncSource = () => {
+          sourceText.value = pathD.value
+        }
+
+        const onCoordInput = (index, key, event) => {
+          const normalized = normalizeCoord(event.target.value)
+          const pointsOnly = pathSegments.value.filter((segment) => segment.type === 'point')
+          const target = pointsOnly[index]
+          if (target) {
+            target[key] = normalized
+            misalignedPointIds.value = misalignedPointIds.value.filter((id) => id !== target.id)
+          }
+          gridWarning.value = ''
+          event.target.value = normalized
+        }
+
+        const setHoveredPoint = (id) => {
+          hoveredPointId.value = id
+        }
+
+        const zoomOut = () => {
+          previewScale.value = Math.max(2, Number((previewScale.value - 0.5).toFixed(1)))
+        }
+
+        const zoomIn = () => {
+          previewScale.value = Math.min(12, Number((previewScale.value + 0.5).toFixed(1)))
+        }
+
+        const applySource = () => {
+          const result = parsePathToSegments(sourceText.value)
+          if (result.segments.length >= 2) {
+            pathSegments.value = result.segments
+            misalignedPointIds.value = result.misalignedIds
+            sourceHint.value = '已解析路径并自动生成关键点表单，坐标已规范化为 2 的倍数。'
+            if (result.misalignedLabels.length) {
+              gridWarning.value = `检测到未对齐 2px 网格的坐标：${result.misalignedLabels.join('、')}（已自动吸附）`
+            } else {
+              gridWarning.value = ''
+            }
+            return
+          }
+          sourceHint.value = '路径格式错误，请输入包含 M/L 指令与坐标的 d 字符串。'
+        }
+
+        const requestPathFromApi = async (prompt) => {
+          const response = await fetch(apiEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prompt,
+              skill: 'Power_Spec_Skill',
+              canvas: 48,
+              grid: 2
+            })
+          })
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          const data = await response.json()
+          return typeof data?.path === 'string' ? data.path : ''
+        }
+
+        const runAiPrompt = async () => {
+          aiLoading.value = true
+          aiHint.value = '正在调用 AI 接口...'
+          try {
+            const apiPath = await requestPathFromApi(aiPrompt.value.trim())
+            const nextPath = apiPath || defaultPath
+            sourceText.value = nextPath
+            applySource()
+            aiHint.value = apiPath
+              ? 'AI 路径已注入，并同步到表单与预览。'
+              : '接口返回为空，已回退默认路径。'
+          } catch {
+            sourceText.value = defaultPath
+            applySource()
+            aiHint.value = '接口暂不可用，已回退默认路径。你可将 requestPathFromApi 替换为实际服务地址。'
+          } finally {
+            aiLoading.value = false
+          }
+        }
+
+        const downloadSvg = () => {
+          const blob = new Blob([svgCode.value], { type: 'image/svg+xml;charset=utf-8' })
+          const url = URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.href = url
+          link.download = 'icon-playground.svg'
+          document.body.appendChild(link)
+          link.click()
+          link.remove()
+          URL.revokeObjectURL(url)
+          actionHint.value = '已下载 SVG 文件'
+        }
+
+        const copyCode = async () => {
+          try {
+            await navigator.clipboard.writeText(svgCode.value)
+            actionHint.value = '已复制 SVG 代码'
+          } catch {
+            actionHint.value = '复制失败，请检查浏览器权限'
+          }
+        }
+
+        const initial = parsePathToSegments(defaultPath)
+        pathSegments.value = initial.segments
+        misalignedPointIds.value = initial.misalignedIds
+        watch(pathSegments, syncSource, { deep: true, immediate: true })
+
+        return {
+          formPoints,
+          aiLoading,
+          aiPrompt,
+          aiHint,
+          previewScale,
+          previewPercent,
+          previewTransformStyle,
+          hoveredPoint,
+          misalignedPointIds,
+          pathD,
+          svgCode,
+          actionHint,
+          showGuides,
+          gridWarning,
+          sourceText,
+          sourceHint,
+          onCoordInput,
+          setHoveredPoint,
+          zoomOut,
+          zoomIn,
+          runAiPrompt,
+          downloadSvg,
+          copyCode,
+          applySource
+        }
+      }
+    }).mount('#app')
+  </script>
+</body>
+</html>
